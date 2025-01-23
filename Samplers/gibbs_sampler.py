@@ -71,8 +71,7 @@ def gibbs_sampler_gmm_multivariate(X, K, num_iterations):
                 Sigma[k] = invwishart.rvs(df=nu_n, scale=Psi_n)
             else:
                 Sigma[k] = invwishart.rvs(df=nu0, scale=Psi0)
-        print(Sigma)
-
+  
         # Step 4: Update pi (Mixing Proportions)
         counts = np.array([np.sum(np.array(z) == k) for k in range(K)])
         counts[counts == 0] = 1
@@ -265,8 +264,8 @@ def bayesian_repulsive_with_variance_constraint(X, K, num_iterations, h):
                 # Compute eigenvalues and eigenvectors
                 eigenvalues, eigenvectors = np.linalg.eigh(proposed_sigma)
                 
-                # Clamp eigenvalues to the range [50, 300]
-                constrained_eigenvalues = np.clip(eigenvalues, 30, 300)
+                # Clamp eigenvalues to the range [30, 300]
+                constrained_eigenvalues = np.clip(eigenvalues, 50, 250)
                 
                 # Reconstruct the covariance matrix
                 constrained_sigma = eigenvectors @ np.diag(constrained_eigenvalues) @ eigenvectors.T
