@@ -2,7 +2,7 @@ import numpy as np
 from scipy.stats import dirichlet, multivariate_normal, invwishart
 from tqdm import tqdm
 
-def gibbs_sampler_gmm_multivariate(X, K, num_iterations):
+def gibbs_sampler_gmm_multivariate(X, K, num_iterations, burn_in):
     """
     Conjugate Gibbs Sampler for a Gaussian Mixture Model (GMM), without repulsive priors.
 
@@ -80,15 +80,11 @@ def gibbs_sampler_gmm_multivariate(X, K, num_iterations):
 
         # Store current iteration's samples
         samples.append((pi.copy(), mu.copy(), Sigma.copy(), z.copy()))
-
-    # Burn-in period
-    burn_in = 500
-    samples = samples[burn_in:]
-
-    return samples
+    
+    return samples[burn_in:]
 
 
-def bayesian_repulsive(X, K, num_iterations, h):
+def bayesian_repulsive(X, K, num_iterations, h, burn_in):
     """
     Gibbs Sampler with Bayesian Repulsion.
     """
@@ -140,7 +136,7 @@ def bayesian_repulsive(X, K, num_iterations, h):
                     multivariate_normal.logpdf(mu[k], mean=m0, cov=V0)
                     + np.log(h(mu))
                     + np.sum(multivariate_normal.logpdf(X_k, mean=mu[k], cov=Sigma[k]))
-                    + 1e-10  # small constant to avoid division by zero
+                    + 1e-6  # small constant to avoid division by zero
                 )
                 acceptance_rate = np.exp(np.clip(log_acceptance_rate, -100, 0))  # Prevent overflow
                 # Accept or reject the proposed value for mu_k
@@ -166,9 +162,5 @@ def bayesian_repulsive(X, K, num_iterations, h):
         # Store the current samples
         samples.append((pi.copy(), mu.copy(), Sigma.copy(), z.copy()))
 
-    # Burn-in period
-    burn_in = 500
-    samples = samples[burn_in:]
-
-    return samples
+    return samples[burn_in:]
 
