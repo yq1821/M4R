@@ -29,7 +29,7 @@ def plot_scatter(last_sample, X, colors, ax):
     ax.legend()
 
 
-def plot_trace(run_samples, K, ax_array):
+def plot_trace(run_samples, K, ax_array, burn_in):
     """
     Plots trace plots for mixing proportions, cluster means, and variances.
     
@@ -39,10 +39,12 @@ def plot_trace(run_samples, K, ax_array):
         K : int
             Number of clusters.
         ax_array : array-like
-            Array of matplotlib.axes.Axes objects arranged as rows:
+            Array of matplotlib.axes.Axes objects arranged in rows:
               - Row 0: Mixing proportions (pi)
-              - Rows 1 to (D): Cluster means (each dimension, D = number of dimensions)
-              - Subsequent rows: Diagonal variances from Sigma (one row per dimension)
+              - Rows 1 to D: Cluster means (each dimension, D = number of dimensions)
+              - Rows (1+D) to (1+2D): Diagonal variances (one row per dimension)
+        burn_in : int or None
+            If provided, a vertical line is added at the burn_in iteration.
     """
     pi_samples = np.array([s[0] for s in run_samples])
     mu_samples = np.array([s[1] for s in run_samples])
@@ -51,28 +53,34 @@ def plot_trace(run_samples, K, ax_array):
     # Trace for mixing proportions (pi)
     for k in range(K):
         ax_array[0].plot(pi_samples[:, k], label=f'Cluster {k+1}')
+    if burn_in is not None:
+        ax_array[0].axvline(x=burn_in, color='black', linestyle='--', label='Burn-in')
     ax_array[0].set_title("Mixing Proportions (pi)")
     ax_array[0].set_xlabel("Iteration")
     ax_array[0].set_ylabel("pi")
     ax_array[0].legend(fontsize=8)
     ax_array[0].grid()
 
-    # Trace for cluster means (mu): plot each dimension separately
     D = mu_samples.shape[2]
+    # Trace for cluster means (mu)
     for dim in range(D):
         for k in range(K):
             ax_array[dim+1].plot(mu_samples[:, k, dim], label=f'Cluster {k+1}')
+        if burn_in is not None:
+            ax_array[dim+1].axvline(x=burn_in, color='black', linestyle='--', label='Burn-in')
         ax_array[dim+1].set_title(f"Cluster Means (mu), Dimension {dim+1}")
         ax_array[dim+1].set_xlabel("Iteration")
         ax_array[dim+1].set_ylabel(f"mu_{dim+1}")
         ax_array[dim+1].legend(fontsize=8)
         ax_array[dim+1].grid()
     
-    # Trace for variances: for each dimension (diagonal elements of Sigma)
+    # Trace for variances (diagonal elements of Sigma)
     for dim in range(D):
         for k in range(K):
             var_trace = [sigma_samples[i, k][dim, dim] for i in range(len(sigma_samples))]
             ax_array[dim+1+D].plot(var_trace, label=f'Cluster {k+1}')
+        if burn_in is not None:
+            ax_array[dim+1+D].axvline(x=burn_in, color='black', linestyle='--', label='Burn-in')
         ax_array[dim+1+D].set_title(f"Cluster Variances, Dimension {dim+1}")
         ax_array[dim+1+D].set_xlabel("Iteration")
         ax_array[dim+1+D].set_ylabel(f"Variance_{dim+1}")
