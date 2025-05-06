@@ -26,12 +26,12 @@ def gibbs_sampler_gmm_multivariate(X, K, num_iterations, burn_in):
     Sigma = np.array([np.cov(X.T) for _ in range(K)])
 
     # -- Hyperparameters --
-    alpha = np.ones(K) * 1     # Dirichlet prior for pi #larger alpha means more uniform distribution
+    alpha = np.ones(K) * 0.5     # Dirichlet prior for pi #larger alpha means more uniform distribution
     m0 = np.mean(X, axis=0)     # Prior mean for mu
-    V0 = np.eye(p) * 5          # Prior covariance for mu  #larger V0, data dominate
+    V0 = np.eye(p) * 5          # Prior covariance for mu #larger V0, more spread out
     V0_inv = np.linalg.inv(V0)
-    nu0 = p + 1                # Deg. of freedom for Inv-Wishart #larger nu0, more concentrated
-    S0 = np.cov(X.T) * 1       # Scale matrix for Inv-Wishart #larger S0,more spread out
+    nu0 = p + 2                # Deg. of freedom for Inv-Wishart #larger nu0, more concentrated
+    S0 = np.cov(X.T) * 1      # Scale matrix for Inv-Wishart #larger S0,more spread out
 
     samples = []
 
@@ -82,7 +82,108 @@ def gibbs_sampler_gmm_multivariate(X, K, num_iterations, burn_in):
         samples.append((pi.copy(), mu.copy(), Sigma.copy(), z.copy()))
     
     return samples[burn_in:]
-def bayesian_repulsive_randomwalk(X, K, num_iterations, h, burn_in):
+
+def gibbs_sampler_gmm_multivariate_joint_mu(X, K, num_iterations, burn_in):
+    """
+    Gibbs sampler for a Gaussian Mixture Model (GMM) with a joint Metropolis–Hastings update
+    for the cluster means (mu). Other parameters are updated conditionally.
+    
+    Parameters:
+        X : ndarray of shape (N, p)
+            Observed data points.
+        K : int
+            Number of clusters.
+        num_iterations : int
+            Total iterations for the sampler.
+        burn_in : int
+            Number of burn-in iterations to discard.
+    
+    Returns:
+        samples : list
+            A list of sampled parameters (pi, mu, Sigma, z) after burn-in.
+    """
+
+
+    N, p = X.shape
+
+    # -- Initialization --
+    pi = dirichlet.rvs([2]*K, size=1)[0]  # Mixing proportions
+    mu = np.random.multivariate_normal(np.mean(X, axis=0), np.cov(X.T), size=K)
+    Sigma = np.array([np.cov(X.T) for _ in range(K)])
+
+    # -- Hyperparameters --
+    alpha = np.ones(K) * 2    # Dirichlet prior for pi
+    m0 = np.mean(X, axis=0)     # Prior mean for mu
+    V0 = np.cov(X, rowvar=False)  # Prior covariance for mu
+    V0_inv = np.linalg.inv(V0)
+    nu0 = p + 2               # Degrees of freedom for Inv-Wishart
+    S0 = np.cov(X.T) * 2      # Scale matrix for Inv-Wishart
+
+    samples = []
+
+    # Tuning parameter for joint random-walk proposal for mu
+    proposal_scale = 1
+
+    # --- Gibbs Sampling Loop ---
+    for iteration in tqdm(range(num_iterations), desc="Sampling"):
+        # --- Step 1: Update cluster assignments (z) ---
+        log_posterior = np.log(np.clip(pi, 1e-10, None)) + np.array([
+            multivariate_normal.logpdf(X, mean=mu[k], cov=Sigma[k])
+            for k in range(K)
+        ]).T
+        # For numerical stability
+        log_posterior = log_posterior - log_posterior.max(axis=1, keepdims=True)
+        posterior_probs = np.exp(log_posterior)
+        posterior_probs /= posterior_probs.sum(axis=1, keepdims=True)
+        z = np.array([np.random.choice(K, p=p) for p in posterior_probs])
+
+        # --- Step 2: Joint update of all mu via Metropolis–Hastings ---
+        # Propose a new mu for every cluster
+        mu_proposed = mu + np.random.normal(loc=0, scale=proposal_scale, size=mu.shape)
+        log_target_current = 0.0
+        log_target_proposed = 0.0
+        # Compute the joint target density over mu's (prior and likelihood contributions)
+        for k in range(K):
+            X_k = X[z == k]
+            n_k = len(X_k)
+            # Likelihood contribution for points in cluster k
+            if n_k > 0:
+                log_target_current += ( multivariate_normal.logpdf(mu[k], mean=m0, cov=V0)
+                                        + np.sum(multivariate_normal.logpdf(X_k, mean=mu[k], cov=Sigma[k]) ) )
+                log_target_proposed += ( multivariate_normal.logpdf(mu_proposed[k], mean=m0, cov=V0)
+                                         + np.sum(multivariate_normal.logpdf(X_k, mean=mu_proposed[k], cov=Sigma[k]) ) )
+            else:
+                # If no data in cluster k, only the prior counts.
+                log_target_current += multivariate_normal.logpdf(mu[k], mean=m0, cov=V0)
+                log_target_proposed += multivariate_normal.logpdf(mu_proposed[k], mean=m0, cov=V0)
+        # Note: Since the symmetric Gaussian random-walk proposal cancels out,
+        # we simply compute the acceptance ratio.
+        acceptance_ratio = np.exp(log_target_proposed - log_target_current)
+        if np.random.rand() < min(1, acceptance_ratio):
+            mu = mu_proposed.copy()
+
+        # --- Step 3: Update Sigma_k from the Inverse-Wishart posterior ---
+        for k in range(K):
+            X_k = X[z == k]
+            n_k = len(X_k)
+            if n_k > 0:
+                S_k = np.cov(X_k.T, bias=True) * n_k
+                nu_n = nu0 + n_k
+                S_n = S0 + S_k
+                Sigma[k] = invwishart.rvs(df=nu_n, scale=S_n)
+            else:
+                Sigma[k] = invwishart.rvs(df=nu0, scale=S0)
+
+        # --- Step 4: Update mixing proportions, pi ---
+        counts = np.array([np.sum(z == k) for k in range(K)])
+        pi = dirichlet.rvs(alpha + counts)[0]
+
+        # --- Store current iteration's samples ---
+        samples.append((pi.copy(), mu.copy(), Sigma.copy(), z.copy()))
+    
+    return samples[burn_in:]
+
+def bayesian_repulsive_randomwalk(X, K, num_iterations, h, burn_in, sig):
     """
     Gibbs Sampler with Bayesian Repulsion.
     """
@@ -120,24 +221,26 @@ def bayesian_repulsive_randomwalk(X, K, num_iterations, h, burn_in):
             n_k = len(X_k)
             if n_k > 0:
                 #propse new mu_k using random walk
-                mu_proposed = np.random.multivariate_normal(mu[k], 1*np.eye(p))
+                mu_proposed = np.random.multivariate_normal(mu[k], sig**2*np.eye(p))
                 #compute the acceptance probability
                 proposed_mu = mu.copy()
                 proposed_mu[k] = mu_proposed
                 log_acceptance_rate = (
                     multivariate_normal.logpdf(mu_proposed, mean=m0, cov=V0)
                     + np.log(h(proposed_mu))
-                    + np.sum(multivariate_normal.logpdf(X_k, mean=mu_proposed, cov=Sigma[k]))
+                    + np.sum(multivariate_normal.logpdf(X_k, mean=mu_proposed, cov=Sigma[k])) #check
                 ) - (
                     multivariate_normal.logpdf(mu[k], mean=m0, cov=V0)
                     + np.log(h(mu))
                     + np.sum(multivariate_normal.logpdf(X_k, mean=mu[k], cov=Sigma[k]))
-                    + 1e-6  # small constant to avoid division by zero
+                     # small constant to avoid division by zero
                 )
-                acceptance_rate = np.exp(np.clip(log_acceptance_rate, -100, 0))  # Prevent overflow
-                # Accept or reject the proposed value for mu_k
-                if np.random.rand() < min(1, acceptance_rate):
-                    mu[k] = mu_proposed  # Accept the proposed mu for cluster k
+                # acceptance_rate = np.exp(np.clip(log_acceptance_rate, -100, 0))  # Prevent overflow
+                if np.log(np.random.rand()) < log_acceptance_rate:
+                    mu[k] = mu_proposed
+                # # Accept or reject the proposed value for mu_k
+                # if np.random.rand() < min(1, np.exp(log_acceptance_rate)):
+                #     mu[k] = mu_proposed  # Accept the proposed mu for cluster k
 
         # Step 3: Update Sigma_k (Cluster Covariances)
         for k in range(K):
@@ -196,7 +299,7 @@ def bayesian_repulsive_randomwalk_joint(X, K, num_iterations, h, burn_in):
         # --- Joint update of all cluster means (mu) ---
         mu_proposed = np.empty_like(mu)
         for k in range(K):
-            mu_proposed[k] = np.random.multivariate_normal(mu[k], np.eye(p))
+            mu_proposed[k] = np.random.multivariate_normal(mu[k], np.eye(p)*0.5)
 
         # Compute the joint target densities (log domain)
         log_target_current = 0.0
