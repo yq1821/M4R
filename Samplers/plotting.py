@@ -279,3 +279,4 @@ def ellipse_lastit(all_run_samples, X, bmi_bounds, sbp_bounds, cols=2, figsize_s
     plt.tight_layout()
     plt.suptitle("Clusters with Confidence Ellipses (Last Iteration)", fontsize=16, y=1.02)
     plt.show()
+
