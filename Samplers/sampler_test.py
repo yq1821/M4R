@@ -130,7 +130,85 @@ def bayesian_repulsive_randomwalk(X, K, num_iterations, h, burn_in, sig, mu):
                 proposed_mu[k] = mu_proposed
                 log_acceptance_rate = (
                     multivariate_normal.logpdf(mu_proposed, mean=m0, cov=V0)
-                    + np.log(h(proposed_mu))
+                    + np.log(max(h(proposed_mu), 1e-10))
+                    + np.sum(multivariate_normal.logpdf(X_k, mean=mu_proposed, cov=Sigma[k])) #check
+                ) - (
+                    multivariate_normal.logpdf(mu[k], mean=m0, cov=V0)
+                    + np.log(max(h(mu), 1e-10))
+                    + np.sum(multivariate_normal.logpdf(X_k, mean=mu[k], cov=Sigma[k]))
+                     # small constant to avoid division by zero
+                )
+
+                # acceptance_rate = np.exp(np.clip(log_acceptance_rate, -100, 0))  # Prevent overflow
+                if np.log(np.random.rand()) < log_acceptance_rate:
+                    mu[k] = mu_proposed
+
+        # Step 3: Update Sigma_k (Cluster Covariances)
+        for k in range(K):
+            X_k = X[z == k]
+            n_k = len(X_k)
+            if n_k > 0:
+                S_k = np.cov(X_k.T, bias=True) * n_k
+                nu_n = nu0 + n_k
+                S_n = S0 + S_k
+                Sigma[k] = invwishart.rvs(df=nu_n, scale=S_n)
+            else:
+                Sigma[k] = invwishart.rvs(df=nu0, scale=S0)
+
+        # Step 4: Update pi (Mixing Proportions)
+        counts = np.bincount(z, minlength=K)  # Count points in each cluster
+        pi = dirichlet.rvs(alpha + counts)[0]  # Sample from the Dirichlet distribution
+
+        # Store the current samples
+        samples.append((pi.copy(), mu.copy(), Sigma.copy(), z.copy()))
+
+    return samples[burn_in:]
+
+def bayesian_repulsive_randomwalk_high(X, K, num_iterations, h, burn_in, sig):
+    """
+    Gibbs Sampler with Bayesian Repulsion.
+    """
+    N, p = X.shape  # Number of data points (N) and dimensions (p)
+
+    # --- Initialization ---
+    pi = dirichlet.rvs(np.ones(K) * 2, size=1).flatten()  # Randomized mixing proportions
+    mu = np.random.multivariate_normal(np.mean(X, axis=0), 2 * np.cov(X.T), size=K)  # Randomized means
+    Sigma = np.array([np.cov(X.T) for _ in range(K)]) 
+
+    # Hyperparameters for priors
+    alpha = np.ones(K) * 5  # Dirichlet prior for mixing proportions
+    mu0 = np.mean(X, axis=0)  # Prior for means
+    m0 = np.mean(X, axis=0)  # Prior mean
+    V0 = 5*np.eye(p)  # Identity matrix of shape (p, p)
+    nu0 = p + 2  # Degrees of freedom for Inverse-Wishart prior
+    S0 = np.cov(X.T) * 2  # Scale matrix for Inverse-Wishart prior
+    
+
+    samples = []  # List to store the sampled parameters
+
+    # --- Gibbs Sampling Loop ---
+    for iteration in tqdm(range(num_iterations), desc="Sampling"):
+        # Step 1: Sample z_i (Cluster Assignments)
+        log_posterior = np.log(np.clip(pi, 1e-10, None)) + np.array(
+            [multivariate_normal.logpdf(X, mean=mu[k], cov=Sigma[k]) for k in range(K)]
+        ).T
+        posterior_probs = np.exp(log_posterior - log_posterior.max(axis=1, keepdims=True))  # Numerical stability
+        posterior_probs /= posterior_probs.sum(axis=1, keepdims=True)
+        z = np.array([np.random.choice(K, p=p) for p in posterior_probs])
+
+        # Step 2: Update mu_k (Cluster Means)
+        for k in range(K):
+            X_k = X[np.array(z) == k]  # Data points in cluster k
+            n_k = len(X_k)
+            if n_k > 0:
+                #propse new mu_k using random walk
+                mu_proposed = np.random.multivariate_normal(mu[k], sig**2*np.eye(p))
+                #compute the acceptance probability
+                proposed_mu = mu.copy()
+                proposed_mu[k] = mu_proposed
+                log_acceptance_rate = (
+                    multivariate_normal.logpdf(mu_proposed, mean=m0, cov=V0)
+                    + np.log(max(h(proposed_mu), 1e-10))
                     + np.sum(multivariate_normal.logpdf(X_k, mean=mu_proposed, cov=Sigma[k])) #check
                 ) - (
                     multivariate_normal.logpdf(mu[k], mean=m0, cov=V0)
@@ -384,8 +462,6 @@ def bayesian_repulsive_neighbor(X, K, num_iterations, h, burn_in, bmi_bounds, sb
         samples.append((pi.copy(), mu.copy(), Sigma.copy(), z.copy()))
 
     return samples[burn_in:]
-
-
 
 
 def bayesian_repulsive_new(X, K, num_iterations, h, burn_in, bmi_bounds, sbp_bounds):
