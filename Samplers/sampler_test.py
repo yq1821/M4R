@@ -95,6 +95,8 @@ def bayesian_repulsive_randomwalk(X, K, num_iterations, h, burn_in, sig, mu):
     # --- Initialization ---
     pi = dirichlet.rvs(np.ones(K) * 2, size=1).flatten()  # Randomized mixing proportions
     # mu = np.random.multivariate_normal(mu_inits, np.cov(X.T), size=K)  # Randomized means
+    if mu is None:
+        mu = np.random.multivariate_normal(np.mean(X, axis=0), np.cov(X.T), size=K)
     Sigma = np.array([np.cov(X.T) for _ in range(K)]) 
 
     # Hyperparameters for priors
